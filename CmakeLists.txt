@@ -1,0 +1,17 @@
+cmake_minimum_required(VERSION 3.10)
+project(OpenCV_Project) # Change the project name here
+
+# Ensure this points to the VC15 folder for your VS 2019 tools
+set(OpenCV_DIR "E:/Programacion/cpp/opencv/opencv/build/x64/vc15/lib")
+
+find_package(OpenCV 3.4 REQUIRED)
+
+# Use main.cpp (Even for C code, use .cpp for easier linking)
+add_executable(MainApp src/main.cpp)
+
+target_link_libraries(MainApp PRIVATE ${OpenCV_LIBS})
+
+add_custom_command(TARGET MainApp POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    "${OpenCV_DIR}/../bin/opencv_world346d.dll"
+    $<TARGET_FILE_DIR:MainApp>)

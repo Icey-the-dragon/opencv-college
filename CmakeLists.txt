@@ -4,10 +4,20 @@ project(OpenCV_Project) # Change the project name here
 # Ensure this points to the VC15 folder for your VS 2019 tools
 set(OpenCV_DIR "E:/Programacion/cpp/opencv/opencv/build/x64/vc15/lib")
 
-find_package(OpenCV 3.4 REQUIRED)
+find_package(OpenCV REQUIRED)
 
 # Use main.cpp (Even for C code, use .cpp for easier linking)
 add_executable(MainApp src/main.cpp)
+
+# add sse2
+if(MSVC)
+    # Solo aplicamos /arch:SSE2 si NO es x64 (para evitar el warning D9002 anterior)
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+        target_compile_options(MainApp PRIVATE /arch:SSE2)
+    endif()
+else()
+    target_compile_options(MainApp PRIVATE -msse2)
+endif()
 
 target_link_libraries(MainApp PRIVATE ${OpenCV_LIBS})
 
@@ -15,3 +25,10 @@ add_custom_command(TARGET MainApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
     "${OpenCV_DIR}/../bin/opencv_world346d.dll"
     $<TARGET_FILE_DIR:MainApp>)
+
+# This creates a target named "RunTest"
+add_custom_target(RunTest
+    COMMAND MainApp "E:/Programacion/cpp/opencv/images/1A.jpg" "E:/Programacion/cpp/opencv/images/1B.jpg"
+    DEPENDS MainApp
+    COMMENT "Running MainApp with custom arguments..."
+)

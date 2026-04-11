@@ -2,26 +2,17 @@
     "version": 8,
     "configurePresets": [
         {
-            "name": "opencv-x64",
-            "displayName": "Visual Studio Build Tools 2019 Release - amd64",
-            "description": "Using compilers for Visual Studio 16 2019 (x64 architecture)",
-            "generator": "Visual Studio 16 2019",
-            "toolset": "host=x64",
-            "architecture": "x64",
+            "name": "opencv-cli",
+            "displayName": "GCC 13.2.0 x86_64-w64-mingw32",
+            "description": "Using compilers: C = C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe, CXX = C:\\ProgramData\\mingw64\\mingw64\\bin\\g++.exe",
+            "generator": "MinGW Makefiles",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "cl.exe",
-                "CMAKE_CXX_COMPILER": "cl.exe"
+                "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Debug"
             }
-        }
-    ],
-    "buildPresets": [
-        {
-            "name": "opencv-x64-debug",
-            "displayName": "Visual Studio Build Tools 2019 Release - amd64 - Debug",
-            "configurePreset": "opencv-x64",
-            "configuration": "Debug"
         }
     ]
 }

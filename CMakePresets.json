@@ -2,9 +2,9 @@
     "version": 8,
     "configurePresets": [
         {
-            "name": "opencv-cli",
-            "displayName": "GCC 13.2.0 x86_64-w64-mingw32",
-            "description": "Using compilers: C = C:\\ProgramData\\mingw64\\mingw64\\bin\\gcc.exe, CXX = C:\\ProgramData\\mingw64\\mingw64\\bin\\g++.exe",
+            "name": "opencv-cli-debug",
+            "displayName": "GCC 13.2.0 (Debug)",
+            "description": "Debug build with GCC",
             "generator": "MinGW Makefiles",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
@@ -12,6 +12,32 @@
                 "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
                 "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
                 "CMAKE_BUILD_TYPE": "Debug"
+            }
+        },
+        {
+            "name": "opencv-cli-release",
+            "displayName": "GCC 13.2.0 (Release)",
+            "description": "Release build with full optimizations",
+            "generator": "MinGW Makefiles",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "Release"
+            }
+        },
+        {
+            "name": "opencv-cli-profiling",
+            "displayName": "GCC 13.2.0 (RelWithDebInfo)",
+            "description": "Optimized build with symbols for Tracy",
+            "generator": "MinGW Makefiles",
+            "binaryDir": "${sourceDir}/out/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
+                "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
+                "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
+                "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
         }
     ]

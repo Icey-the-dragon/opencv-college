@@ -1,0 +1,97 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#include <opencv/cv.h>
+#include <opencv/highgui.h>
+
+#include <emmintrin.h>
+#include <time.h>
+
+#include "SSE2.h"
+
+int main(int argc, char **argv)
+{
+    if (argc < 2)
+    {
+        printf("Error: Usage %s image_file_name\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    // CV_LOAD_IMAGE_COLOR = 1 forces the resultant IplImage to be colour.
+    // CV_LOAD_IMAGE_GRAYSCALE = 0 forces a greyscale IplImage.
+    // CV_LOAD_IMAGE_UNCHANGED = -1
+    IplImage *Img1 = cvLoadImage(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+
+    // Always check if the program can find the image file
+    if (!Img1)
+    {
+        printf("Error: file %s not found\n", argv[1]);
+        return EXIT_FAILURE;
+    }
+    IplImage *Img2 = cvLoadImage(argv[2], CV_LOAD_IMAGE_UNCHANGED);
+
+    // Always check if the program can find the image file
+    if (!Img2)
+    {
+        printf("Error: file %s not found\n", argv[2]);
+        return EXIT_FAILURE;
+    }
+
+    cvNamedWindow(argv[1], CV_WINDOW_AUTOSIZE);
+    cvShowImage(argv[1], Img1);
+    cvNamedWindow(argv[2], CV_WINDOW_AUTOSIZE);
+    cvShowImage(argv[2], Img2);
+    cvWaitKey(0);
+
+    IplImage *ImgMosaic = cvCreateImage(cvSize(Img1->width, Img1->height), IPL_DEPTH_8U, 3);
+
+    int x1, y1, x2, y2;
+    unsigned int lowewsDiff, savedx, savedy;
+    cvNamedWindow("Mosaico - SSE2", CV_WINDOW_AUTOSIZE);
+    struct timespec start, end;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    for (x1 = 0; x1 < Img1->width; x1 += 16)
+    {
+        for (y1 = 0; y1 < Img1->height; y1 += 16)
+        {
+            lowewsDiff = -1;
+            for (x2 = 0; x2 < Img2->width; x2 += 16)
+            {
+                for (y2 = 0; y2 < Img2->height; y2 += 16)
+                {
+                    int temp = compararBloqueSSE2(Img1, Img2, x1, y1, x2, y2);
+                    if (temp < lowewsDiff)
+                    {
+                        savedx = x2;
+                        savedy = y2;
+                        lowewsDiff = temp;
+                    }
+                }
+            }
+            copiarBloqueSSE2(Img2, ImgMosaic, savedx, savedy, x1, y1, 16, 16);
+        }
+    }
+    clock_gettime(CLOCK_MONOTONIC, &end);
+
+    double time_taken = (end.tv_sec - start.tv_sec) +
+                        (end.tv_nsec - start.tv_nsec) / 1e9;
+
+    // 4. Print with 3 decimal places
+    printf("Time taken: %.3f seconds\n", time_taken);
+
+    cvShowImage("Mosaico - SSE2", ImgMosaic);
+
+    cvWaitKey(0);
+
+    // memory release for images before exiting the application
+    cvReleaseImage(&Img1);
+    cvReleaseImage(&Img2);
+    cvReleaseImage(&ImgMosaic);
+
+    // Self-explanatory
+    cvDestroyWindow(argv[1]);
+    cvDestroyWindow(argv[2]);
+    cvDestroyWindow("Mosaico - SSE2");
+    return EXIT_SUCCESS;
+}

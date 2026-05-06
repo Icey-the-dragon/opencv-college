@@ -3,23 +3,52 @@ project(OpenCV_Project) # Change the project name here
 
 # Ensure this points to the VC15 folder for your VS 2019 tools
 set(OpenCV_DIR "E:/Programacion/cpp/opencv/opencv/build/x64/vc15/lib")
+include(FetchContent)
+
+# Include tracy and opencv
+FetchContent_Declare(
+    tracy
+    GIT_REPOSITORY https://github.com/wolfpld/tracy.git
+    GIT_TAG v0.13.1
+    GIT_SHALLOW TRUE
+    GIT_PROGRESS TRUE
+)
+
+option(TRACY_ENABLE " " ON )
+option(TRACY_ON_DEMAND " " ON )
+
+FetchContent_MakeAvailable(tracy)
 
 find_package(OpenCV REQUIRED)
 
 # Use main.cpp (Even for C code, use .cpp for easier linking)
-add_executable(MainApp src/main.cpp)
+file(GLOB SOURCE_FILES "src/*.cpp")
+
+add_executable(MainApp ${SOURCE_FILES})
+
+target_include_directories(MainApp PRIVATE
+    include/
+)
 
 # add sse2
 if(MSVC)
-    # Solo aplicamos /arch:SSE2 si NO es x64 (para evitar el warning D9002 anterior)
-    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
-        target_compile_options(MainApp PRIVATE /arch:SSE2)
-    endif()
+
+# Solo aplicamos /arch:SSE2 si NO es x64 (para evitar el warning D9002 anterior)
+if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+target_compile_options(MainApp PRIVATE /arch:SSE2)
+endif()
 else()
-    target_compile_options(MainApp PRIVATE -msse2)
+target_compile_options(MainApp PRIVATE -msse2)
 endif()
 
-target_link_libraries(MainApp PRIVATE ${OpenCV_LIBS})
+# Apply the definition
+target_compile_definitions(MainApp PUBLIC TRACY_ENABLE)
+
+target_link_libraries(MainApp PRIVATE ${OpenCV_LIBS} Tracy::TracyClient)
+
+if(WIN32)
+target_link_libraries(MainApp PRIVATE ws2_32 dbghelp secur32)
+endif()
 
 add_custom_command(TARGET MainApp POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
@@ -28,7 +57,7 @@ add_custom_command(TARGET MainApp POST_BUILD
 
 # This creates a target named "RunTest"
 add_custom_target(RunTest
-    COMMAND MainApp "E:/Programacion/cpp/opencv/images/1A.jpg" "E:/Programacion/cpp/opencv/images/1B.jpg"
+    COMMAND MainApp "E:/Programacion/cpp/opencv/images/aves.jpg" "E:/Programacion/cpp/opencv/images/frutas.jpg"
     DEPENDS MainApp
     COMMENT "Running MainApp with custom arguments..."
 )

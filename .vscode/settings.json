@@ -1,0 +1,8 @@
+{
+    "cmake.debugConfig": {
+        "args": [
+            "E:/Programacion/cpp/opencv/images/aves.jpg",
+            "E:/Programacion/cpp/opencv/images/frutas.jpg"
+        ]
+    }
+}

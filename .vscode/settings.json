@@ -1,8 +1,9 @@
 {
     "cmake.debugConfig": {
         "args": [
-            "E:/Programacion/cpp/opencv/images/aves.jpg",
-            "E:/Programacion/cpp/opencv/images/frutas.jpg"
+            "./images/aves.jpg",
+            "./images/frutas.jpg"
         ]
-    }
+    },
+    "cmake.sourceDirectory": "/home/icey/cpp/opencv-college"
 }

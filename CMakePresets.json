@@ -2,41 +2,38 @@
     "version": 8,
     "configurePresets": [
         {
-            "name": "opencv-cli-debug",
-            "displayName": "GCC 13.2.0 (Debug)",
-            "description": "Debug build with GCC",
-            "generator": "MinGW Makefiles",
+            "name": "gcc-standard",
+            "displayName": "linux-gnu (Debug)",
+            "description": "Using compilers: C = /usr/bin/gcc, CXX = /usr/bin/g++",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
+                "CMAKE_C_COMPILER": "/usr/bin/gcc",
+                "CMAKE_CXX_COMPILER": "/usr/bin/g++",
                 "CMAKE_BUILD_TYPE": "Debug"
             }
         },
         {
-            "name": "opencv-cli-release",
-            "displayName": "GCC 13.2.0 (Release)",
-            "description": "Release build with full optimizations",
-            "generator": "MinGW Makefiles",
+            "name": "gcc-standard",
+            "displayName": "linux-gnu (Release)",
+            "description": "Using compilers: C = /usr/bin/gcc, CXX = /usr/bin/g++",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
+                "CMAKE_C_COMPILER": "/usr/bin/gcc",
+                "CMAKE_CXX_COMPILER": "/usr/bin/g++",
                 "CMAKE_BUILD_TYPE": "Release"
             }
         },
         {
-            "name": "opencv-cli-profiling",
-            "displayName": "GCC 13.2.0 (RelWithDebInfo)",
-            "description": "Optimized build with symbols for Tracy",
-            "generator": "MinGW Makefiles",
+            "name": "gcc-standard",
+            "displayName": "linux-gnu (RelWithDebInfo)",
+            "description": "Using compilers: C = /usr/bin/gcc, CXX = /usr/bin/g++",
             "binaryDir": "${sourceDir}/out/build/${presetName}",
             "cacheVariables": {
                 "CMAKE_INSTALL_PREFIX": "${sourceDir}/out/install/${presetName}",
-                "CMAKE_C_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/gcc.exe",
-                "CMAKE_CXX_COMPILER": "C:/ProgramData/mingw64/mingw64/bin/g++.exe",
+                "CMAKE_C_COMPILER": "/usr/bin/gcc",
+                "CMAKE_CXX_COMPILER": "/usr/bin/g++",
                 "CMAKE_BUILD_TYPE": "RelWithDebInfo"
             }
         }

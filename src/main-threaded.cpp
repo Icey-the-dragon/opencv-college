@@ -16,6 +16,7 @@
 #include "SSE2.h"
 
 #define NTHREADS 13
+#define TRACY_CALLSTACK 64
 
 // ———— Estructuras ————————————————————————
 volatile int atomic_ready = 0;
@@ -137,6 +138,8 @@ int main(int argc, char **argv)
     clock_gettime(CLOCK_MONOTONIC, &start);
     TracyMessage("Started spawn of threads", strlen("Started spawn of threads"));
 
+    FrameMark;
+
     int i;
     for (i = 0; i < NTHREADS; i++)
     {
@@ -170,8 +173,7 @@ int main(int argc, char **argv)
     TracyMessage("Collapsed all threads", strlen("Collapsed all threads"));
 
     cvShowImage("MosaicoSIMD", ImgMosaico);
-    cvWaitKey(0);
-
+    
     // memory release for images before exiting the application
     cvReleaseImage(&Img1);
     cvReleaseImage(&Img2);
@@ -181,6 +183,5 @@ int main(int argc, char **argv)
     cvDestroyWindow(argv[1]);
     cvDestroyWindow(argv[2]);
     cvDestroyWindow("MosaicoSIMD");
-    FrameMark;
     return EXIT_SUCCESS;
 }

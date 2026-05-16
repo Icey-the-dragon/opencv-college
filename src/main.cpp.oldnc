@@ -1,0 +1,531 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <limits.h>
+#include <string.h>
+#include <emmintrin.h>
+#include <time.h>
+#include <pthread.h>
+
+#include <opencv/cv.h>
+#include <opencv/highgui.h>
+
+#include <tracy/Tracy.hpp>
+
+
+// CONFIGURATION
+
+#define NTHREADS 16            // Number of Threads
+#define LUMA_STEP 16           // Multiple buckets 
+#define LUMA_THRESH 20         // Lum threshold
+
+
+typedef struct {
+    int ancho;      // Block width in pixels
+    int alto;       // Block height in pixels
+    int channels;   // 3 for RGB, 1 for grayscale
+} BlockConfig;
+
+static BlockConfig g_cfg = {16, 16, 3}; // {Block Width, Block height, nchannels} 
+
+
+// STRUCTUREs
+
+typedef struct {
+    unsigned char* data;    // Flat pixel data, aligned
+    size_t size;            // Total bytes = ancho * alto * channels
+    size_t row_bytes;       // Bytes per row = ancho * channels
+    int num_vectors;        // ceil(size / 16) porque SIMD
+} BloqueDinamico;
+
+
+
+// BUCKET SYSTEM
+
+typedef struct {
+    int* indices;
+    int count;
+    int capacity;
+} Bucket;
+
+#define NUM_BUCKETS (256 / LUMA_STEP)
+
+
+// GLOBAL SHARED DATA (read-only during matching) Like windows Enviroment variables but for me program
+
+static Bucket gBuckets[NUM_BUCKETS];
+static BloqueDinamico* gPaleta = NULL;
+static int* gPaletaLuma = NULL;
+static int gTotalBloques = 0;
+
+
+// THREAD ARGUMENTS
+
+typedef struct {
+    int thread_id;
+    int start_row;          
+    int end_row;            
+    IplImage* imgA;         
+    IplImage* imgNew;       
+} ThreadArgs;
+
+
+// FUNCTION DECLARATIONS
+
+void bloque_init(BloqueDinamico* b);
+void bloque_free(BloqueDinamico* b);
+void extraerBloqueDinamico(IplImage* img, int fila, int col, BloqueDinamico* out);
+void pintarBloqueDinamico(IplImage* dst, int fila, int col, BloqueDinamico* b);
+int bloqueLumaDinamico(BloqueDinamico* b);
+int compararBloquesDinamicos(BloqueDinamico* A, BloqueDinamico* B);
+
+static inline int bucketIndexFromLuma(int luma);
+static void bucketInitAll(void);
+static void bucketFreeAll(void);
+static void bucketPush(Bucket* b, int idx);
+
+void execDinamico(IplImage* ImgA, IplImage* ImgC);
+void* thread_worker_dinamico(void* arg);
+
+
+
+int main(int argc, char** argv)
+{
+    ZoneScoped;
+    if (argc < 3) {
+        printf("Uso: %s imgA imgC [block_w] [block_h]\n", argv[0]);
+        printf("  block_w, block_h: optional, default 8x8\n");
+        return EXIT_FAILURE;
+    }
+    if (argc >= 5) {
+        g_cfg.ancho = atoi(argv[3]);
+        g_cfg.alto = atoi(argv[4]);
+        printf("Block size: %dx%d\n", g_cfg.ancho, g_cfg.alto);
+    }
+
+    IplImage* Img1 = cvLoadImage(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+    IplImage* Img2 = cvLoadImage(argv[2], CV_LOAD_IMAGE_UNCHANGED);
+
+    if (!Img1 || !Img2) {
+        printf("Error: could not load images\n");
+        return EXIT_FAILURE;
+    }
+
+    // Validate dimensions
+    if (Img1->width % g_cfg.ancho != 0 || Img1->height % g_cfg.alto != 0 ||
+        Img2->width % g_cfg.ancho != 0 || Img2->height % g_cfg.alto != 0
+        ) {
+        fprintf(stderr, "Error: image dimensions must be multiples of block size (%dx%d)\n",
+                g_cfg.ancho, g_cfg.alto);
+        cvReleaseImage(&Img1);
+        cvReleaseImage(&Img2);
+        return EXIT_FAILURE;
+    }
+    // Validate type
+    if (Img1->nChannels != Img2->nChannels) {
+        fprintf(stderr, "Error: image channels must be the same (%dx%d)\n",
+                Img1->nChannels, Img2->nChannels);
+        cvReleaseImage(&Img1);
+        cvReleaseImage(&Img2);
+        return EXIT_FAILURE;
+    }
+
+    // Show input images
+    cvNamedWindow("Source A", CV_WINDOW_AUTOSIZE);
+    cvNamedWindow("Palette C", CV_WINDOW_AUTOSIZE);
+    cvShowImage("Source A", Img1);
+    cvShowImage("Palette C", Img2);
+    cvWaitKey(0);
+    cvDestroyAllWindows();
+    
+    // Reload images fresh (in case showing modified them) *Shrugs*
+    cvReleaseImage(&Img1);
+    cvReleaseImage(&Img2);
+    Img1 = cvLoadImage(argv[1], CV_LOAD_IMAGE_UNCHANGED);
+    Img2 = cvLoadImage(argv[2], CV_LOAD_IMAGE_UNCHANGED);
+
+    // Process
+    struct timespec start, finish;
+    double elapsed;
+
+    TracyMessage("Here we start",strlen("Here we start"));
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    execDinamico(Img1, Img2);
+    clock_gettime(CLOCK_MONOTONIC, &finish);
+    TracyMessage("Here we end",strlen("Here we end"));
+
+    elapsed = (finish.tv_sec - start.tv_sec);
+    elapsed += (finish.tv_nsec - start.tv_nsec) / 1000000000.0;
+    printf("TIEMPO transcurrido: %f segundos\n", elapsed);
+
+    printf("Press any key to exit...\n");
+    cvWaitKey(0);
+
+    cvReleaseImage(&Img1);
+    cvReleaseImage(&Img2);
+    cvDestroyAllWindows();
+
+
+    FrameMark;
+    return EXIT_SUCCESS;
+}
+
+
+// BLOCK ALLOCATION
+
+void bloque_init(BloqueDinamico* b)
+{
+    ZoneScopedN("Iniciar_Bloque");
+    b->row_bytes = g_cfg.ancho * g_cfg.channels;
+    b->size = b->row_bytes * g_cfg.alto;
+    // Allocate with padding to 32 bytes for safe SIMD overrun on last chunk
+    b->data = (unsigned char*)malloc(b->size + 256);
+    TracyAlloc(b->data,b->size * 32);
+    if (!b->data) {
+        fprintf(stderr, "Error: aligned_alloc failed\n");
+        exit(EXIT_FAILURE);
+    }
+    b->num_vectors = (int)((b->size + 15) / 16);
+}
+
+void bloque_free(BloqueDinamico* b)
+{
+    free(b->data);
+    TracyFree(b->data);
+    b->data = NULL;
+    b->size = 0;
+    b->num_vectors = 0;
+}
+
+
+// BLOCK EXTRACTION (handles any width/height/channels) :)
+
+void extraerBloqueDinamico(IplImage* img, int fila, int col, BloqueDinamico* out)
+{
+    ZoneScopedN("Extraer_Bloque");
+    unsigned char* dst = out->data;
+
+    for (int f = 0; f < g_cfg.alto; f++) {
+        unsigned char* src = (unsigned char*)(img->imageData
+                                             + (fila + f) * img->widthStep
+                                             + col * img->nChannels);
+        memcpy(dst, src, out->row_bytes);
+        dst += out->row_bytes;
+    }
+
+    // Zero-pad tail so SIMD doesn't read garbage
+    size_t padded = (size_t)out->num_vectors * 16;
+    if (padded > out->size) {
+        memset(out->data + out->size, 0, padded - out->size);
+    }
+}
+
+
+
+void pintarBloqueDinamico(IplImage* dst, int fila, int col, BloqueDinamico* b)
+{
+    ZoneScopedN("Pintar_Bloque");
+    for (int f = 0; f < g_cfg.alto; f++) {
+        unsigned char* row = (unsigned char*)(dst->imageData
+                                             + (fila + f) * dst->widthStep
+                                             + col * dst->nChannels);
+        memcpy(row, b->data + f * b->row_bytes, b->row_bytes);
+    }
+}
+
+
+
+int bloqueLumaDinamico(BloqueDinamico* b)
+{
+    ZoneScopedN("Bloque_Luma");
+    long sum = 0;
+    for (size_t i = 0; i < b->size; i++) {
+        sum += b->data[i];
+    }
+    return (int)(sum / (long)b->size);
+}
+
+
+
+int compararBloquesDinamicos(BloqueDinamico* A, BloqueDinamico* B)
+{
+    ZoneScopedN("CompararBloque")
+    if (A->size != B->size) return INT_MAX;
+
+    __m128i sum = _mm_setzero_si128();
+    __m128i zero = _mm_setzero_si128();
+
+    for (int i = 0; i < A->num_vectors; i++) {
+        __m128i a = _mm_loadu_si128((__m128i*)(A->data + i * 16));
+        __m128i b = _mm_loadu_si128((__m128i*)(B->data + i * 16));
+
+        __m128i maxab = _mm_max_epu8(a, b);
+        __m128i minab = _mm_min_epu8(a, b);
+        __m128i diff = _mm_sub_epi8(maxab, minab);
+
+        sum = _mm_add_epi64(sum, _mm_sad_epu8(diff, zero));
+    }
+
+    long long res[2];
+    _mm_storeu_si128((__m128i*)res, sum);
+    return (int)(res[0] + res[1]);
+}
+
+
+
+static inline int bucketIndexFromLuma(int luma)
+{
+    ZoneScopedN("MaxTreshold")
+    int idx = luma / LUMA_STEP;
+    if (idx < 0) idx = 0;
+    if (idx >= NUM_BUCKETS) idx = NUM_BUCKETS - 1;
+    return idx;
+}
+
+static void bucketInitAll(void)
+{
+    ZoneScopedN("Init_Bucket");
+    for (int i = 0; i < NUM_BUCKETS; i++) {
+        gBuckets[i].indices = NULL;
+        gBuckets[i].count = 0;
+        gBuckets[i].capacity = 0;
+    }
+}
+
+static void bucketFreeAll(void)
+{
+    ZoneScopedN("Free_Bucket");
+    for (int i = 0; i < NUM_BUCKETS; i++) {
+        free(gBuckets[i].indices);
+        gBuckets[i].indices = NULL;
+        gBuckets[i].count = 0;
+        gBuckets[i].capacity = 0;
+    }
+}
+
+static void bucketPush(Bucket* b, int idx)
+{
+    ZoneScopedN("Push_Bucket");
+    if (b->count == b->capacity) {
+        int newCap = (b->capacity == 0) ? 64 : b->capacity * 2;
+        int* newArr = (int*)realloc(b->indices, newCap * sizeof(int));
+        if (!newArr) {
+            fprintf(stderr, "Error: realloc in bucketPush\n");
+            exit(EXIT_FAILURE);
+        }
+        b->indices = newArr;
+        b->capacity = newCap;
+    }
+    b->indices[b->count++] = idx;
+}
+
+
+// I still confused about how to parallelize this part without causing too much cache thrashing or losing the bucket optimization.
+
+void* thread_worker_dinamico(void* arg)
+{
+    ZoneScopedN("Thread_dispatcher");
+    ThreadArgs* args = (ThreadArgs*)arg;
+    BloqueDinamico bloqueA;
+    bloque_init(&bloqueA);
+
+    for (int fA = args->start_row; fA < args->end_row; fA += g_cfg.alto) {
+        for (int cA = 0; cA < args->imgA->width; cA += g_cfg.ancho) {
+
+            extraerBloqueDinamico(args->imgA, fA, cA, &bloqueA);
+            int lumaA = bloqueLumaDinamico(&bloqueA);
+            int bA = bucketIndexFromLuma(lumaA);
+
+            int mejorDif = INT_MAX;
+            int mejorIdx = -1;
+
+            // Search same bucket
+            Bucket* B = &gBuckets[bA];
+            for (int i = 0; i < B->count; i++) {
+                int idxPal = B->indices[i];
+                int dl = gPaletaLuma[idxPal] - lumaA;
+                if (dl < -LUMA_THRESH || dl > LUMA_THRESH) continue;
+
+                int d = compararBloquesDinamicos(&bloqueA, &gPaleta[idxPal]);
+                if (d < mejorDif) {
+                    mejorDif = d;
+                    mejorIdx = idxPal;
+                }
+            }
+
+            // Search neighbor buckets, no longer crashes if not directneighbor because of luma threshold.
+            if (mejorIdx < 0) {
+                for (int delta = -1; delta <= 1; delta++) {
+                    int b = bA + delta;
+                    if (b < 0 || b >= NUM_BUCKETS || b == bA) continue;
+
+                    Bucket* B2 = &gBuckets[b];
+                    for (int i = 0; i < B2->count; i++) {
+                        int idxPal = B2->indices[i];
+                        int dl = gPaletaLuma[idxPal] - lumaA;
+                        if (dl < -LUMA_THRESH || dl > LUMA_THRESH) continue;
+
+                        int d = compararBloquesDinamicos(&bloqueA, &gPaleta[idxPal]);
+                        if (d < mejorDif) {
+                            mejorDif = d;
+                            mejorIdx = idxPal;
+                        }
+                    }
+                }
+            }
+
+            // Fallback: So literally a ALl x ALL 
+            if (mejorIdx < 0) {
+                for (int i = 0; i < gTotalBloques; i++) {
+                    int dl = gPaletaLuma[i] - lumaA;
+                    if (dl < -LUMA_THRESH || dl > LUMA_THRESH) continue;
+
+                    int d = compararBloquesDinamicos(&bloqueA, &gPaleta[i]);
+                    if (d < mejorDif) {
+                        mejorDif = d;
+                        mejorIdx = i;
+                    }
+                }
+            }
+
+            if (mejorIdx < 0) mejorIdx = 0;
+
+            pintarBloqueDinamico(args->imgNew, fA, cA, &gPaleta[mejorIdx]);
+        }
+    }
+
+    bloque_free(&bloqueA);
+    pthread_exit(NULL);
+
+    return NULL;
+}
+
+
+// MAIN EXECUTION
+
+void execDinamico(IplImage* ImgA, IplImage* ImgC)
+{
+    ZoneScopedNC("Threads_Displayer",tracy::Color::Red2);
+    if (!ImgA || !ImgC) {
+        fprintf(stderr, "execDinamico: null images\n");
+        return;
+    }
+
+    //  STEP 1: Build palette from ImgC  
+    int bloquesFila = ImgC->width / g_cfg.ancho;
+    int bloquesCol = ImgC->height / g_cfg.alto;
+    gTotalBloques = bloquesFila * bloquesCol;
+
+    if (gTotalBloques <= 0) {
+        fprintf(stderr, "execDinamico: totalBloques <= 0\n");
+        return;
+    }
+
+    printf("Palette: %d blocks (%d x %d)\n", gTotalBloques, bloquesFila, bloquesCol);
+
+    gPaleta = (BloqueDinamico*)malloc(sizeof(BloqueDinamico) * gTotalBloques);
+    gPaletaLuma = (int*)malloc(sizeof(int) * gTotalBloques);
+    if (!gPaleta || !gPaletaLuma) {
+        fprintf(stderr, "execDinamico: malloc failed\n");
+        free(gPaleta);
+        free(gPaletaLuma);
+        return;
+    }
+
+    // Init all palette blocks cuase malloc worked GREAT until it didn't :v
+    for (int i = 0; i < gTotalBloques; i++) {
+        bloque_init(&gPaleta[i]);
+    }
+
+    bucketInitAll();
+
+    int idx = 0;
+    for (int f = 0; f < ImgC->height; f += g_cfg.alto) {
+        for (int c = 0; c < ImgC->width; c += g_cfg.ancho) {
+            extraerBloqueDinamico(ImgC, f, c, &gPaleta[idx]);
+            int luma = bloqueLumaDinamico(&gPaleta[idx]);
+            gPaletaLuma[idx] = luma;
+            int bIdx = bucketIndexFromLuma(luma);
+            bucketPush(&gBuckets[bIdx], idx);
+            idx++;
+        }
+    }
+
+    // Leave here, for debugging purposes, to see the bucket distribution before processing.
+    printf("Bucket distribution:\n");
+    for (int i = 0; i < NUM_BUCKETS; i++) {
+        printf("  Bucket %d (%d-%d): %d blocks\n",
+               i, i * LUMA_STEP, (i + 1) * LUMA_STEP - 1, gBuckets[i].count);
+    }
+
+    //  STEP 2 Create Image
+    IplImage* ImgNew = cvCreateImage(cvSize(ImgA->width, ImgA->height), IPL_DEPTH_8U, 3);
+
+    //  STEP 3 Calculate for threads 
+    int total_rows = ImgA->height;
+    int rows_per_thread = total_rows / NTHREADS;
+    // Align to block height  so a thread doesnt work on half blocks or smth
+    rows_per_thread = (rows_per_thread / g_cfg.alto) * g_cfg.alto;
+    if (rows_per_thread < g_cfg.alto) rows_per_thread = g_cfg.alto;
+
+    pthread_t threads[NTHREADS];
+    ThreadArgs thread_args[NTHREADS];
+
+    int current_row = 0;
+    int t;
+
+    for (t = 0; t < NTHREADS && current_row < total_rows; t++) {
+        thread_args[t].thread_id = t;
+        thread_args[t].imgA = ImgA;
+        thread_args[t].imgNew = ImgNew;
+        thread_args[t].start_row = current_row;
+
+        int end_row = current_row + rows_per_thread;
+        if (end_row > total_rows || t == NTHREADS - 1) {
+            end_row = total_rows;
+        }
+        // Align end to block boundary
+        end_row = (end_row / g_cfg.alto) * g_cfg.alto;
+        if (end_row <= current_row) end_row = total_rows;
+
+        thread_args[t].end_row = end_row;
+        current_row = end_row;
+
+        printf("Thread %d: rows %d to %d\n", t, thread_args[t].start_row, thread_args[t].end_row);
+    }
+
+    int num_threads = t;
+
+    // STEP 4 Spawn THE threads... *DUn DUn DUn*
+    for (int i = 0; i < num_threads; i++) {
+        int rc = pthread_create(&threads[i], NULL, thread_worker_dinamico, (void*)&thread_args[i]);
+        if (rc) {
+            fprintf(stderr, "ERROR: pthread_create() returned %d\n", rc);
+            exit(EXIT_FAILURE);
+        }
+    }
+    
+    //  STEP 5: Wait for completion Thingamaginja
+    for (int i = 0; i < num_threads; i++) {
+        pthread_join(threads[i], NULL);
+    }
+
+    TracyMessage("We finished calculating", strlen("We finished calculating"));
+    ZoneNamedNC(Collecting_Threads,"Garbage_Collector",tracy::Color::AliceBlue,true);
+
+    printf("All threads completed.\n");
+
+    //  STEP 6: Show result 
+    cvNamedWindow("Mosaico_Result", CV_WINDOW_NORMAL);
+    cvShowImage("Mosaico_Result", ImgNew);
+
+    //  Cleanup 
+    bucketFreeAll();
+    for (int i = 0; i < gTotalBloques; i++) {
+        bloque_free(&gPaleta[i]);
+    }
+    free(gPaleta);
+    free(gPaletaLuma);
+    gPaleta = NULL;
+    gPaletaLuma = NULL;
+    cvReleaseImage(&ImgNew);
+}
